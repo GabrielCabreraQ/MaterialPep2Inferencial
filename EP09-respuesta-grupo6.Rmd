@@ -1,0 +1,173 @@
+---
+title: "EP09"
+output: html_document
+date: "2025-06-02"
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+```
+
+1. Definir la semilla a utilizar, que corresponde a los últimos cuatro dígitos del RUN (sin considerar el dígito verificador) del integrante de menor edad del equipo.
+2. Seleccionar una muestra aleatoria de 100 mujeres (si la semilla es un número par) o 100 hombres (si la semilla es impar), y separar 70 casos para trabajar en la construcción de modelos y 30 para su evaluación en datos no vistos.
+3. Seleccionar de forma aleatoria ocho posibles variables predictoras.
+4. Seleccionar, de las otras variables, una que el equipo considere que podría ser útil para predecir la variable Peso (sin considerar la estatura), justificando bien esta selección.
+5. Usando el entorno R y paquetes estándares1, construir un modelo de regresión lineal simple con el predictor seleccionado en el paso anterior.
+6. Usando herramientas estándares1 para la exploración de modelos del entorno R, buscar entre dos y cinco predictores de entre las variables seleccionadas al azar en el punto 3, para agregar al modelo de regresión lineal simple obtenido en el paso 5.
+7. Evaluar la bondad de ajuste (incluyendo el análisis de casos atípicos y casos influyentes) y la generalidad (condiciones para RLM) de los modelos y “arreglarlos” en caso de que presenten algún problema.
+8. Evaluar el poder predictivo del modelo con los datos no utilizados para construirlo.
+
+```{r,message=FALSE, warning=FALSE}
+# Cargar los datos
+datos <- read.csv2("EP09 Datos.csv")
+
+# filtro y muestra aleatoria
+mujeres <- subset(datos, Gender == 0)
+set.seed(6058)
+muestra <- sample_n(mujeres, 100, replace = FALSE)
+muestra70 <- sample_n(mujeres, 70, replace = FALSE)
+restantes30 <- anti_join(muestra, muestra70)
+
+# Todas las variables disponibles (excepto Gender y la que se quiere predecir)
+variables_disponibles <- colnames(muestra70)
+variables_disponibles <- setdiff(variables_disponibles, c("Height", "Gender"))
+
+# Selección aleatoria de 8 variables predictoras
+variables_predictoras <- sample(variables_disponibles, 8)
+
+var_restantes <- setdiff(variables_disponibles, variables_predictoras)
+
+# Crear un nuevo data frame con solo esas variables
+muestra_predictoras <- muestra70[, variables_predictoras]
+```
+
+4. Dada la investigación realizada para determinar la importancia de una variable útil para predecir el peso, se encontró que la circunferencia de la cintura (Waist Girth) es una variable que se relaciona directamente con el peso corporal. Esta relación se debe a que la circunferencia de la cintura es un indicador de la cantidad de grasa abdominal, que está asociada con el riesgo de enfermedades metabólicas y cardiovasculares. Por lo tanto, creemos que esta variable es útil para predecir el peso y se selecciona como predictor principal en nuestro modelo.
+Como referencia obtuvimos un documento llamado "Circunferencia de cintura: una medición importante y útil del riesgo cardiometabólico" de Manuel Ignacio Moreno González, del Departamento de Nutrición, Diabetes y Metabolismo de la Facultad de Medicina Pontificia Universidad Católica de Chile, que ayuda a respaldar esta elección.
+
+
+5. Usando el entorno R y paquetes estándares, construir un modelo de regresión lineal simple con el predictor seleccionado en el paso anterior.
+
+```{r,message=FALSE, warning=FALSE}
+library(car)
+modelosimple=lm(Weight~Waist.Girth,data = muestra70)
+summary(modelosimple)
+```
+Como podemos observar el modelo resulta significativo lo que indica un buen ajuste del modelo a los datos y una correlacion de la variable predictoria (circunferencia de la cintura) y la variable 0 (peso), con un p-value de 2.2e-16, r-squared de 0.7829 y adjusted R-squared de  0.7797.
+
+6. Usando herramientas estándares para la exploración de modelos del entorno R, buscar entre dos y cinco predictores de entre las variables seleccionadas al azar en el punto 3, para agregar al modelo de regresión lineal simple obtenido en el paso 5.
+
+```{r,message=FALSE, warning=FALSE}
+print(variables_predictoras)
+```
+
+Entre las 8 variables seleccionadas al azar, se eligieron las siguientes variables para agregar al modelo de regresión lineal simple: circunferencia del bicep (Bicep Girth), circunferencia a la altura del ombligo (Navel Girth) y diámetro bitrocanterico (Bitrochanteric diameter). Estas variables fueron seleccionadas porque están relacionadas con la composición corporal y pueden influir en el peso de una persona. Las otras variables no se consideraron relevantes para el modelo, ya que están más relacionadas con características óseas o fisiológicas que no afectan directamente al peso. 
+
+La construcción del modelo se basó en la regresión jerárquica, donde se ordenó por prioridad la inclusión de las variables en el modelo, comenzando por la circunferencia de la cintura, que es la variable más relevante para predecir el peso, seguida por las otras variables que también pueden tener una relación con el peso corporal.
+
+Las variables fueron probadas en el modelo dependiendo de la importancia que posee la variable específica para predecir el peso de la mujer, en esta oportunidad se encontró que la circunferencia del bicep y el diametro a la altura del ombligo tienen una significancia similar para predecir el peso, no así el diametro bitrocanterico que tiene una significancia menor. 
+
+Como referencia para la importancia de estas variables, se utilizó el artículo "Comparative effectiveness of anthropometric measurements for predicting metabolic outcomes" de Flegal et al. (2009), que destaca la relevancia de las medidas antropométricas en la predicción de resultados metabólicos.
+
+```{r,message=FALSE, warning=FALSE}
+library(car)
+modelo2 = update(modelosimple, . ~ . + Bicep.Girth)
+modelo3 = update(modelo2, . ~ . + Navel.Girth)
+modelo4 = update(modelo3, . ~ . + Bitrochanteric.diameter)
+anova(modelosimple, modelo2, modelo3, modelo4)
+#metricas aic y bic
+AIC(modelosimple, modelo2, modelo3, modelo4)
+BIC(modelosimple, modelo2, modelo3, modelo4)
+```
+
+Como podemos observar el modelo 4 es el mas significativo, el mejor analizando las métricas AIC y BIC, además de que el RSS es el mas bajo de todos los modelos, lo que indica que el modelo se adeca correctamente a los datos, por lo que se elige este modelo para continuar con el análisis.
+
+Ahora procedemos a evaluar la confiabilidad del modelo construido, el cual debe cumplir las siguientes condiciones:
+
+1) La variable de salida/respuesta debe ser continua y cuantitativa.
+2) Los predictores deben ser cuatitativos o dicotomicos.
+3) Los predictores deben tener algun grado de variabilidad, es decir no son constantes
+4) cada predictor debe estar relacionado linealmente con la respuesta
+5) la distribucion de los residuos debe ser cercana a la normal centrada en cero
+6) La variabilidad de los residuos debe ser constante(homostaceidad)
+7) Los residuos deben ser independientes entre si
+8) No debe existir multicolinealidad entre los predictores
+9) Los valores atipicos no deben influir en el modelo de manera significativa.
+
+verificacion de condiciones:
+
+1: se cumple ya que el peso es una variable numerica y continua
+
+2: se cumple ya que los predictores son cuantitativos
+
+3: verificaremos esta condicion usando:
+```{r,message=FALSE, warning=FALSE}
+var(muestra70$Waist.Girth)
+var(muestra70$Bicep.Girth)
+var(muestra70$Navel.Girth)
+var(muestra70$Bitrochanteric.diameter)
+```
+como podemos observar las varianzas de todos los predictores son distintas de 0, por lo que se cumple la condicion.
+
+Para verificar las condiciones 4, 5 y 6 revisemos lo siguiente:
+
+```{r,message=FALSE, warning=FALSE}
+library(car)
+# Verificando la linealidad de los predictores
+residualPlots(modelo4)
+marginalModelPlots(modelo4)
+# Verificando la normalidad de los residuos
+qqPlot(modelo4)
+# Homocedasticidad
+ncvTest(modelo4)
+```
+Analizando los resultados podemos concluir lo siguiente. Por parte del grafico de los residuos y los residuos marginales, se puede observar que las variables predictoras cumplen con la condicion de linealidad, ya que los puntos se distribuyen de manera aleatoria alrededor de la linea horizontal. Por parte del grafico QQ podemos observar que los residuos se distribuyen de manera normal centrada en 0, por lo que se cumple la condicion de normalidad. Por ultimo el test de homocedasticidad el resultado no es significativo lo que indica que la variabilidad de los residuos es constante, por lo que se cumple la condicion de homocedasticidad.
+
+siguiendo con el analisis de las condiciones de confiabilidad, ahora verificaremos la condicion 7, que indica que los residuos deben ser independientes entre si. Para esto usaremos el test de Durbin-Watson.
+
+```{r,message=FALSE, warning=FALSE}
+library(lmtest)
+dwtest(modelo4)
+```
+
+El test no nos arrojo un valor significativo lo que indica que los residuos son independientes entre si, por lo que se cumple la condicion.
+
+Ahora verificaremos la condicion 8, que indica que no debe existir multicolinealidad entre los predictores. Para esto usaremos el VIF (Variance Inflation Factor).
+```{r,message=FALSE, warning=FALSE}
+library(car)
+vif(modelo4)
+```
+
+como podemos observar 3 de las 4 variables del modelo presentan valores entre 5 y 10 lo que indica que existe una multicolinearidad preocupante entre las variables y pueden afectar a los resultados del modelo.
+
+Continuando con la ultima condicion, la condicion 9, que indica que los valores atipicos no deben influir en el modelo de manera significativa. Para esto usaremos el grafico de influencia. Para dicho analisis usaremos influencePlot del paquete car.
+```{r,message=FALSE, warning=FALSE}
+library(car)
+influencePlot(modelo4)
+```
+Como se puede observar ninguna variable atipica influye en el modelo por lo que se cumple la condicion de que los valores atipicos no influyen en el modelo de manera significativa.
+
+a nivel de conclusion sobre la confiabilidad de nuestro modelo, podemos decir que se cumplen la mayoria de las condiciones de confiabilidad, excepto la condicion 8, que indica que existe una multicolinealidad preocupante entre las variables del modelo, lo que puede afectar a los resultados del modelo. Por lo que se recomienda revisar el modelo y considerar acciones correctivas.
+
+Ahora como ultima parte del trabajo verificaremos las predicciones del modelo con los datos no utilizados para construirlo, es decir con los 30 casos restantes.
+
+```{r,message=FALSE, warning=FALSE}
+# Predecir con los datos no utilizados
+predicciones <- predict(modelo4, newdata = restantes30)
+# Agregar las predicciones al data frame de los datos no utilizados
+restantes30$Predicciones <- predicciones
+# Mostrar las predicciones
+print(restantes30[, c("Weight", "Predicciones")])
+# Calcular el error cuadrático medio (MSE)
+mse <- mean((restantes30$Weight - restantes30$Predicciones)^2)
+# Calcular el error cuadrático medio (RMSE)
+rmse <- sqrt(mse)
+rmse
+```
+
+Como podemos observar obtuvimos un error cuadratico medio del 4.07 lo que indica que a pesar de quizas no ser un modelo confiable al 100% es un modelo que se adecua bien a los datos y puede ser utilizado para predecir el peso de las personas con una buena precision.
+
+
+
+
+
+
