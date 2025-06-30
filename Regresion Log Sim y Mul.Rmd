@@ -1,0 +1,112 @@
+---
+title: "Regresion Log Sim y Mul"
+author: "Gabriel Cabrera"
+date: "2025-06-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(car)
+library(dplyr)
+library(ggpubr)
+library(gridExtra)
+library(leaps)
+library(tidyr)
+library(caret)
+```
+
+Creación de la nueva columna en base al diametro de la rodilla
+```{r}
+set.seed(1111)
+datos <- read.csv2("EP09 Datos.csv")
+
+diametro_rodilla <- datos$Knees.diameter
+
+funcion_tgr <- function(x) {
+  if (x > 19.0){
+    return  ("Si")
+  } else {
+    return ("No")
+  }
+}
+
+for (i in 1:length(diametro_rodilla)) {
+  diametro_rodilla[i] <- funcion_tgr(diametro_rodilla[i])
+}
+
+TGR <- factor(diametro_rodilla, levels = c("Si", "No"))
+datos <- cbind(datos, TGR) #acá se agrega la columna
+
+# datos$TGR <- factor(ifelse(datos$Knees.diameter > 19.0, "Si", "No"), levels = c("Si", "No")) se puede hacer en una sola linea
+
+```
+
+```{r}
+set.seed(1111)
+
+muestra_h <- datos %>% filter(Gender == 1)
+
+muestra75h_si <- muestra_h %>% filter(TGR == "Si") %>% sample_n(75)
+muestra75h_no <- muestra_h %>% filter(TGR == "No") %>% sample_n(75)
+
+
+muestra150 <- rbind(muestra75h_si, muestra75h_no)
+
+
+datos_ent <- rbind(muestra75h_si[1:50, ], muestra75h_no[1:50, ])
+datos_pred <- rbind(muestra75h_si[51:75, ], muestra75h_no[51:75, ])
+
+#con esto se reordenan los datos
+
+datos_ent <- datos_ent[sample(nrow(datos_ent)), ]  
+datos_pred <- datos_pred[sample(nrow(datos_pred)), ]
+
+#debo contar la cantidad de observaciones con tgr si y tgr no en datos ent y pred
+
+cantidad_si_ent <- sum(datos_ent$TGR == "Si")
+cantidad_no_ent <- sum(datos_ent$TGR == "No")
+cantidad_si_pred <- sum(datos_pred$TGR == "Si")
+cantidad_no_pred <- sum(datos_pred$TGR == "No")
+
+
+
+```
+
+se necesita seleccionar aleatoriamente 8 predictores
+```{r}
+
+set.seed(1111)
+nombrespred <- colnames(datos)
+#tiene que ser distinto de Weight
+predictores <- sample(nombrespred[nombrespred != c("Weight", "TGR")], 8)
+print(predictores)
+
+#ahora hay que seleccionar una variable dependiente que sea distinta de las 8 obtenidas 
+variable_dependiente <- sample(nombrespred[nombrespred != c(predictores, "TGR")], 1)
+print(variable_dependiente)
+
+```
+
+Creacion modelo de regresion logistica usando caret
+
+REGRESIÓN ESCALONADA
+
+```{r}
+modelo <- glm(TGR ~ Ankles.diameter,  data=datos_ent, family = binomial(link = "logit"))
+summary(modelo)
+```
+
+```{r}
+modelocompleto = glm(TGR ~ Ankles.diameter + Navel.Girth + Bitrochanteric.diameter + Bicep.Girth, data=datos_ent, family = binomial(link = "logit"))
+
+modelonulo = glm(en~1, data = datos_ent, family = binomial(link = "logit"))
+
+modelofinal = step(modelonulo,
+                  scope = list(upper = modelocompleto),
+                  direction = "both", 
+                  trace = FALSE)
+
+cat("\nModelo obtenido:\n")
+print(modelofinal[["coefficients"]])
+summary(modelofinal) 
+```
