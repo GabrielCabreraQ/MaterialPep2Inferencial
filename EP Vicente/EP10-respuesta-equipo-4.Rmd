@@ -1,0 +1,294 @@
+---
+title: "EP10 - Regresión Lineal Logística"
+author: "Equipo 4"
+output: html_document
+date: "2025-06-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(car)
+library(ggpubr)
+library(tidyr)
+```
+
+## Pregunta 1
+
+Asegurando reproducibilidad, seleccionar una muestra de 150 mujeres asegurando que la mitad tenga estado nutricional “sobrepeso” y la otra mitad “no sobrepeso” en cada caso. Dividir esta muestra en dos conjuntos: los datos de 100 personas (50 con EN “sobrepeso”) para utilizar en la construcción de los modelos y 50 personas (25 con EN “sobrepeso”) para poder evaluarlos.
+
+```{r message=F, warning=F}
+# 1. Definir semilla
+set.seed(9976)
+
+# 2. Muestra aleatoria 100 mujeres
+datos <- read.csv2("EP09 Datos.csv", sep = ";")
+variables_og <- colnames(datos)
+
+# Creacion variable IMC
+datos$IMC <- datos$Weight / ((datos$Height / 100) **2)
+
+# Crear variable EN (1 si IMC >= 23,2)
+datos$EN <- ifelse((datos$IMC >= 23.2), 1, 0)
+
+# Conseguir muestra de 150 mujeres separadas segun EN.
+muestra1 <- datos %>%
+  mutate(Gender = as.factor(Gender)) %>%
+  filter(Gender == 0) %>%
+  filter(EN == 1) %>%
+  sample_n(75)
+
+muestra2 <- datos %>%
+  mutate(Gender = as.factor(Gender)) %>%
+  filter(Gender == 0) %>%
+  filter(EN == 0) %>%
+  sample_n(75)
+
+#MODELO
+# Cjto. Entrenamiento -> 70 casos
+i_entrenamiento1 <- sample.int(n = nrow(muestra1), size = 50, replace = FALSE)
+entrenamiento1 <- muestra1[i_entrenamiento1, ]
+
+# Cjto. Prueba -> 30 casos
+prueba1 <- muestra1[-i_entrenamiento1, ]
+
+# Cjto. Entrenamiento -> 70 casos
+i_entrenamiento2 <- sample.int(n = nrow(muestra2), size = 50, replace = FALSE)
+entrenamiento2 <- muestra2[i_entrenamiento1, ]
+
+# Cjto. Prueba -> 30 casos
+prueba2 <- muestra2[-i_entrenamiento2, ]
+```
+
+## Pregunta 2
+
+Recordar las ocho posibles variables predictoras seleccionadas de forma aleatoria en el ejercicio anterior.
+
+```{r}
+variables <- c("Wrist.Minimum.Girth", "Waist.Girth", "Knees.diameter", "Forearm.Girth", "Chest.diameter", "Bicep.Girth", "Age", "Chest.Girth") 
+print(variables)
+```
+
+Luego, haremos el complemento de las variables seleccionadas para ver cuáles no fueron sorteadas.
+
+```{r}
+variables <- c(variables, "EN")
+otras_variables <- setdiff(colnames(entrenamiento1), variables)
+print(otras_variables)
+```
+
+## Pregunta 3
+
+Seleccionar, de las otras variables, una que el equipo considere que podría ser útil para predecir la clase EN, justificando bien esta selección (idealmente con literatura).
+
+Dentro de las variables que se pueden escoger como un predictor útil para poder predecir el valor de EN, se decidió escoger la variable "Hip.Girth", que describe el díametro de la cintura.
+Esta variable fue escogida influenciada por las menciones de esta misma en la página que presenta el dataset a estudiar "Exploring relationships in body dimensions. Journal of Statistics Education, 11(2)", Heinz et al. (2003).
+
+- "Hip Girth" es mencionado como una de las pocas variables donde las medidas de mujeres tienden a superar las medidas de los hombres.
+
+- "Hip Girth" aparece en un estudio anexado de Behnke & Wilmore (1974, p. 55) donde esta variable es usada como un predictor muy significativo en un modelo de regresión lineal para predecir el peso.
+
+## Pregunta 4
+
+Usando el entorno R, construir un modelo de regresión logística con el predictor seleccionado en el paso anterior y utilizando de la muestra obtenida.
+
+```{r}
+muestra_ent <- rbind(entrenamiento1, entrenamiento2)
+
+# mezclar datos
+muestra_ent <- muestra_ent[sample(1:nrow(muestra_ent)), ]
+
+tabla_va <- muestra_ent %>%
+  select(all_of(c(variables, "Hip.Girth")))
+
+# cambiar variable despues o justificar xd
+modelo_rlog <- glm(EN ~ Hip.Girth, family = binomial(link = "logit"), data = tabla_va)
+
+summary(modelo_rlog)
+```
+## Pregunta 5
+
+Usando estas herramientas para la exploración de modelos del entorno R, buscar entre dos y cinco predictores de entre las variables seleccionadas al azar, recordadas en el punto 2, para agregar al modelo obtenido en el paso 4. Para esto, utilice eliminación hacia atrás, sin usar la función step().
+
+```{r warning=FALSE}
+# Empezamos con el modelo completo con las 8 variables
+modelo <- glm(EN ~ ., family = binomial(link = "logit"), data = tabla_va)
+
+# Eliminación hacia atrás
+paso <- drop1(modelo, test = "F")
+print(paso)
+
+# Quitar Forearm.Girth con F value = 0.0003, el mas bajo
+modelo <- update(modelo, . ~ . - Forearm.Girth)
+
+paso <- drop1(modelo, test = "F")
+print(paso)
+
+# Quitar Wrist.Minimum.Girth con F value = 0.0616, el mas bajo
+modelo <- update(modelo, . ~ . - Wrist.Minimum.Girth)
+paso <- drop1(modelo, test = "F")
+print(paso)
+
+# Quitar Bicep.Girth con F value = 0.1813, el mas bajo
+modelo <- update(modelo, . ~ . - Bicep.Girth)
+paso <- drop1(modelo, test = "F")
+print(paso)
+
+# Quitar Knee.diameter con F value = 0.6350
+modelo <- update(modelo, . ~ . - Knees.diameter)
+paso <- drop1(modelo, test = "F")
+print(paso)
+
+# Quitar Waist.Girth con F value = 0.6275, el mas bajo
+modelo <- update(modelo, . ~ . - Waist.Girth)
+paso <- drop1(modelo, test = "F")
+print(paso)
+
+# Quitar Chest.diameter con F value = 2.2034, el mas bajo
+modelo <- update(modelo, . ~ .  - Chest.diameter)
+paso <- drop1(modelo, test = "F")
+print(paso)
+
+summary(modelo)
+```
+Habiendo realizado la eliminación de variables hacia atrás, dejando sólo aquellas que aportan significativamente al modelo, se ha llegado a un modelo más parsimonioso, el cual tiene las siguientes variables predictoras:
+
+- Hip.Girth (Circunferencia de la cadera)
+- Age (Edad)
+- Chest.Girth (Circunferencia del pecho)
+
+
+## Pregunta 6
+
+A continuación estudiaremos la confiabilidad del modelo seleccionado. Para esto se deben cumplir las siguientes condiciones:
+
+**1. Debe existir una relación lineal entre los predictores y la respuesta transformada**
+
+```{r}
+#Evaluar usando la funcion residualPlots() del paquete car}
+residualPlots(modelo, fitted = FALSE)
+```
+
+Los valores p obtenidos de los test de linealidad (Age p = 0.6402 ; Chest.Girth p = 1.1033 ; Hip.Girth p = 0.5627), todos los valores p son mayores a 0.05, por lo que no hay evidencia de que no se cumpla la linealidad entre los predictores y la respuesta transformada.
+Dado que no podemos rechazar que NO existe linealidad, podemos concluir que se cumple la primera condicion.
+
+**2. Los residuos deben ser independientes entre sí.**
+
+```{r}
+#usando la funcion durbinWatsonTest() del paquete car
+dbw <- durbinWatsonTest(modelo)
+dbw
+```
+
+Se puede concluir que los residuos son independientes entre sí, ya que el valor del estadístico Durbin-Watson es cercano a 2 y el valor p = 0.19 no es significativo, lo que indica que no hay autocorrelación.
+
+Con esto verificamos que efectivamente se está cumpliendo la independencia de los residuos.
+
+**3. Multicolinealidad entre los predictores.**
+
+```{r}
+#usando la funcion vif() del paquete car
+vif_values <- vif(modelo)
+vif_values
+```
+Los valores de VIF, no sobrepasan el umbral de 5 (considerado como un umbral preocupante), por lo que no hay evidencia de multicolinealidad entre los predictores.
+
+**4. Observaciones suficientes para estimar los parámetros del modelo, sin información incompleta.**
+
+Para evaluar esto, se puede observar el número de observaciones por cada predictor en el modelo. Se recomienda que hayan más de 10 o 15 observaciones por cada predictor y nivel de las variables categóricas.
+
+En nuestro caso, recordando las instrucciones del enunciado, ya tenemos 50 observaciones para cada clase de EN (0 y 1). Para comprobar con los predictores:
+
+```{r}
+mostrar_obs <- function(predictor) {
+  n_predictor <- length(unique(tabla_va[[predictor]]))
+  sprintf("Observaciones: %d", n_predictor)
+}
+
+sapply(c("Hip.Girth", "Age", "Chest.Girth"), mostrar_obs)
+```
+
+Vemos que para cada predictor hay observaciones suficientes. Además, con un total de 100 observaciones, no hay evidencia de información incompleta.
+
+**5. Separacion perfecta que ocurre cuando no hay superposicion entre las clases.**
+
+En este caso los predictores no presentan separación perfecta, ya que hay observaciones de ambas clases en cada uno de los predictores. Por lo tanto, no hay evidencia de separacion perfecta. ya que por ejemplo, en el predictor Hip.Girth, hay observaciones de ambas clases (EN = 0 y EN = 1) para todos los valores de Hip.Girth.
+
+**6. Las estimaciones de los coeficicientes no estan dominadas por casos influyentes.**
+
+```{r}
+# Usando la funcion influencePlot() del paquete car
+inf <- influencePlot(modelo)
+print(inf)
+```
+
+Los puntos que se encuentran alejados de la nube de puntos, son los casos influyentes. Podemos decir que estos casos no afectan significativamente el modelo, ya que no hay puntos que se encuentren muy alejados de la nube de puntos.
+
+Esto es suficiente para concluir que no hay evidencia de que las estimaciones de los coeficientes esten dominadas por casos influyentes. Por lo tanto podemos decir que se cumple la sexta condición.
+
+Finalmente, luego de comprobar las condiciones de confiabilidad del modelo, podemos concluir que el modelo cumple con todas las condiciones necesarias para ser considerado confiable.
+
+## Pregunta 7
+
+A partir del modelo definido en la pregunta 5, se determinará el poder predictivo de este, utilizando un conjunto de 50 mujeres (25 con EN = 1 y 25 con EN = 0) que no fueron incluidas a la hora de la construcción del modelo. En particular se calculará la sensibilidad y especificidad del modelo, permitiéndonos juzgar la capacidad de generalización de este.
+
+- La **sensibilidad** nos indica la capacidad del modelo para identificar correctamente los casos positivos.
+
+- La **especificidad** nos indica la capacidad del modelo para identificar correctamente los casos negativos.
+
+```{r}
+# Combinar los dos dataframes de prueba en uno solo.
+# 25 con EN=1 y 25 con EN=0
+muestra_pru <- rbind(prueba1, prueba2)
+
+# Obtener las probabilidades predichas para el conjunto de prueba.
+probabilidades_pru <- predict(modelo, newdata = muestra_pru, type = "response")
+
+# Umbral de clasificación en 0.5.
+umbral <- 0.5
+
+predicciones_clase <- ifelse(probabilidades_pru >= umbral, 1, 0)
+
+observados_clase <- muestra_pru$EN
+
+# Se calculan los componentes de la matriz de confusión. 
+# Verdaderos Positivos (VP)
+VP <- sum(predicciones_clase == 1 & observados_clase == 1)
+
+# Verdaderos Negativos (VN)
+VN <- sum(predicciones_clase == 0 & observados_clase == 0)
+
+# Falsos Positivos (FP)
+FP <- sum(predicciones_clase == 1 & observados_clase == 0)
+
+# Falsos Negativos (FN)
+FN <- sum(predicciones_clase == 0 & observados_clase == 1)
+
+# Calcular la sensibilidad
+sensibilidad <- VP / (VP + FN)
+
+# Calcular la especificidad
+especificidad <- VN / (FP + VN)
+```
+
+```{r}
+# Imprimir la matriz de confusión para visualizar el rendimiento.
+cat("Matriz de Confusión (Datos de Prueba):\n")
+
+# crear tabla a mano con los valores de VP, FP, VN, FN
+matriz <- data.frame(
+  Predicho = c("Positivo", "Negativo"),
+  Real_Positivo = c(VP, FN),
+  Real_Negativo = c(FP, VN)
+)
+print(matriz)
+
+# Imprimir las métricas calculadas.
+sprintf("Sensibilidad del modelo: %.4f\n", sensibilidad)
+sprintf("Especificidad del modelo: %.4f\n", especificidad)
+```
+
+Podemos observar que el modelo construido demuestra un buen poder predictivo sobre el conjunto de prueba, aunque un poco desbalanceado ya que es más específico que sensible. Es decir, es más probable que el modelo identifique correctamente mujeres que no tienen sobrepeso que este logre identificar a las mujeres que sí tienen.
+En general, el modelo demuestra una buena capacidad de generalización para ser aplicado con datos nuevos.
+

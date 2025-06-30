@@ -1,0 +1,581 @@
+---
+title: "EP11 - Regresión Lineal Logística"
+author: "Equipo 4"
+output: html_document
+date: "2025-06-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(car)
+library(ggpubr)
+library(tidyr)
+library(leaps)
+library(caret)
+library(pROC)
+```
+
+## 1. Definir la semilla a utilizar, que corresponde a los primeros cinco dígitos del RUN del integrante de mayor edad del equipo.
+
+```{r message=F, warning=F}
+# 1. Definir semilla
+set.seed(21226)
+
+# Lectura de datos
+datos <- read.csv2("EP09 Datos.csv", sep = ";")
+columnas <- colnames(datos)
+
+# Creacion variable IMC
+datos$IMC <- datos$Weight / ((datos$Height / 100) **2)
+
+# Crear variable EN (1 si IMC >= 23,2)
+datos$EN <- ifelse((datos$IMC >= 23.2), 1, 0)
+
+# Conseguir muestra de 100 personas separadas segun EN (50 y 50).
+muestra1 <- datos %>%
+  filter(EN == 1) %>%
+  sample_n(50)
+
+muestra2 <- datos %>%
+  filter(EN == 0) %>%
+  sample_n(50)
+
+muestra <- rbind(muestra1, muestra2)
+```
+
+## 2. Seleccionar una muestra de 100 personas, asegurando que la mitad tenga estado nutricional “sobrepeso” y la otra mitad “no sobrepeso”.
+
+```{r message=F, warning=F}
+# Conseguir muestra de 100 personas separadas segun EN (50 y 50).
+muestra1 <- datos %>%
+  filter(EN == 1) %>%
+  sample_n(50)
+
+muestra2 <- datos %>%
+  filter(EN == 0) %>%
+  sample_n(50)
+
+muestra <- rbind(muestra1, muestra2)
+muestra <- muestra[sample(1:nrow(muestra)),] # mezclar filas
+
+```
+
+## 3. Usando las herramientas del paquete leaps, realizar una búsqueda exhaustiva para seleccionar entre dos y ocho predictores que ayuden a estimar la variable Peso (Weight), obviamente sin considerar las nuevas variables IMC ni EN, y luego utilizar las funciones del paquete caret para construir un modelo de regresión lineal múltiple con los predictores escogidos y evaluarlo usando bootstrapping.
+
+```{r}
+# Busqueda Exhaustiva
+busqueda <- regsubsets(Weight ~., method = "exhaustive", nbest = 2, nvmax = 8, data = muestra, 
+                       force.out = c("IMC", "EN"))
+
+# extraer resultados, modelo con menor BIC en este caso
+resumen_busqueda <- summary(busqueda)
+i_bic_minimo <- which.min(resumen_busqueda$bic)
+mejor_bic <- resumen_busqueda$which[i_bic_minimo, ]
+variables_mejor_bic <- names(mejor_bic[mejor_bic == TRUE])[-1] # -1 para quitar "(Intercept)"
+print(variables_mejor_bic)
+
+plot(busqueda)
+
+```
+Creacion de modelo de regresión lineal múltiple con los predictores seleccionados:
+```{r}
+#Construcción del modelo con bootstrapping
+control <- trainControl(method = "boot", number = 2999)
+modelo_lm <- train(Weight ~ ., 
+                  data = muestra[, c("Weight", variables_mejor_bic)], 
+                  method = "lm", 
+                  trControl = control)
+
+#Análisis detallado del modelo final
+cat("\nResumen del modelo final:\n")
+print(summary(modelo_lm$finalModel))
+
+#Métricas de evaluación
+cat("\nMétricas de evaluación del modelo:\n")
+print(modelo_lm$results)
+
+#Importancia relativa de las variables
+importancia <- varImp(modelo_lm)
+print(importancia)
+
+#Diagnósticos del modelo
+par(mfrow=c(2,2))
+plot(modelo_lm$finalModel)
+
+
+
+```
+
+
+El análisis de los coeficientes muestra que todos los predictores son significativos, ya que todos tienen p-valor < 0.05.
+esto indica que cada uno de los predictores seleccionados contribuye significativamente al modelo de regresión lineal múltiple.
+
+ahora pasaremos a estudiar los diagnósticos de residuos, que son cruciales para verificar los supuestos del modelo de regresión lineal múltiple.
+```{r}
+
+# Extraer los residuos del modelo
+residuos <- residuals(modelo_lm$finalModel)
+valores_ajustados <- fitted(modelo_lm$finalModel)
+
+par(mfrow=c(2,2))
+plot(modelo_lm$finalModel)
+par(mfrow=c(1,1))
+
+```
+Segun lo visto en los gráficos de diagnóstico, podemos observar que los residuos parecen tener una distribución normal, lo que sugiere que el supuesto de normalidad de los residuos se cumple.
+
+
+Estudiando la confiabilidad del modelo, es importante realizar pruebas formales de los supuestos de la regresión lineal múltiple, como la normalidad de los residuos, homocedasticidad, independencia de los residuos y multicolinealidad.
+
+```{r}
+# Normalidad de los Residuos:
+# H0: Los residuos siguen una distribución normal.
+# Ha: Los residuos no siguen una distribución normal.
+
+cat("\n--- Prueba de Normalidad de los Residuos (Shapiro-Wilk) ---\n")
+shapiro_test <- shapiro.test(residuos)
+print(shapiro_test)
+```
+Dado que el valor p es menor a 0.05, se rechaza la hipótesis nula de normalidad de los residuos, lo que sugiere que los residuos no siguen una distribución normal.
+
+Con esto es suficiente para rechazar la confiabilidad del modelo, ya que la normalidad de los residuos es un supuesto clave en la regresión lineal múltiple.
+Pero vamos a continuar con las pruebas de supuestos para tener un análisis más completo.
+
+```{r}
+
+# Homocedasticidad con ncvTest:
+cat("\n--- Prueba de Homocedasticidad (Breusch-Pagan) ---\n")
+ncv <- ncvTest(modelo_lm$finalModel)
+print(ncv)
+```
+el valor p de la prueba de Breusch-Pagan es menor a 0.05, lo que indica que se rechaza la hipótesis nula de homocedasticidad, sugiriendo que los residuos no tienen varianza constante.
+esto indica que el modelo no cumple con el supuesto de homocedasticidad, lo que puede afectar la validez de las inferencias realizadas a partir del modelo.
+
+Seguiremos estudiando las demas conclusiones
+
+
+```{r}
+
+# Independencia de los Residuos 
+# H0: Los residuos son independientes.
+# Ha: Los residuos están autocorrelacionados.
+dw_test <- durbinWatsonTest(modelo_lm$finalModel)
+print(dw_test)
+
+```
+El valor de Durbin-Watson es cercano a 2, lo que sugiere que no hay autocorrelación significativa entre los residuos. Por lo tanto, se acepta la hipótesis nula de independencia de los residuos.
+
+```{r}
+#Estudiando la multicolinealidad con VIF
+
+vif_values <- vif(modelo_lm$finalModel)
+print(vif_values)
+
+```
+Obtenemos valores vif mayores a 5, incluso mayores a 10, lo que indica que hay multicolinealidad severa entre algunos de los predictores. En particular, los siguientes predictores tienen VIF elevados:
+
+```{r}
+#Estudiando la importancia relativa de las variables, con la función varImp del paquete caret
+#esto nos permite ver qué tan importantes son los predictores en el modelo.
+
+importancia <- varImp(modelo_lm)
+print(importancia)
+
+```
+Para ajustar el modelo, es importante considerar tanto la multicolinealidad como la importancia de los predictores.
+ 
+En este caso vamos a eliminar los predictores que tienen un VIF elevado, ya que esto indica una multicolinealidad severa,y ademas segun el estudio de la importancia en el modelo, por lo tanto los predictores que se eliminarán son:
+  -chest.girth VIF = 11.05 y importancia = 8.52
+  - waist.girth VIF = 7.16 y importancia = 0
+ 
+ 
+para el caso de la variable forearm.girth VIF = 6.11 y importancia = 30, vemos que tiene una importancia alta, por lo que no la eliminaremos del modelo, a pesar de tener un VIF elevado.
+
+[CORRECCIÓN DE ERROR]
+
+si se elimina forearm.girth, ya que al eliminar los predictores con VIF elevado, se elimina también la variable forearm.girth, ya que tiene un VIF de 6.11, lo que indica una multicolinealidad severa.
+
+
+
+
+Ahora contruiremos un nuevo modelo de regresión lineal múltiple con los nuevos predictores, eliminando los que tienen VIF elevado. Utilizaremos bootstrapping para evaluar el modelo, como se hizo anteriormente.
+```{r}
+# Eliminar los predictores con VIF elevado
+
+#[CORRECION DE ERROR]
+#predictores_a_eliminar <- c("Chest.Girth", "Waist.Girth")
+predictores_a_eliminar <- c("Chest.Girth", "Waist.Girth", "Forearm.Girth")
+nuevos_predictores <- setdiff(variables_mejor_bic, predictores_a_eliminar)
+# Construir el modelo de regresión lineal múltiple con los nuevos predictores usando bootstrapping
+nuevos_datos <- muestra[, c("Weight", nuevos_predictores)]
+
+control <- trainControl(method = "boot", number = 2999) 
+modelo_lm_nuevo <- train(Weight ~ ., 
+                         data = nuevos_datos, 
+                         method = "lm", 
+                         trControl = control)
+# Análisis detallado del nuevo modelo final
+cat("\nResumen del nuevo modelo final:\n")
+print(summary(modelo_lm_nuevo$finalModel))
+
+```
+Se obtiene un r cuadrado ajustado de 0.97, lo que indica un buen ajuste del modelo. El modelo cuenta con un buen poder predictivo, ya que los predictores seleccionados son significativos y tienen una importancia relativa alta.
+
+```{r}
+residuos <- residuals(modelo_lm_nuevo$finalModel)
+valores_ajustados <- fitted(modelo_lm_nuevo$finalModel)
+
+
+
+par(mfrow=c(2,2))
+plot(modelo_lm_nuevo$finalModel)
+par(mfrow=c(1,1))
+
+
+```
+Atraves de los graficos podemos observar linealidad de los residuos, homocedasticidad, normalidad de los residuos y ausencia de casos influyentes.
+
+Ahora estudiaremos estas condiciones mas a fondo, para ver si el modelo es confiable.
+
+```{r}
+# Normalidad de los Residuos:
+# H0: Los residuos siguen una distribución normal.
+# Ha: Los residuos no siguen una distribución normal.
+
+residuos_nuevo <- modelo_lm_nuevo$finalModel$residuals
+
+cat("\n--- Prueba de Normalidad de los Residuos (Shapiro-Wilk) ---\n")
+shapiro_test_nuevo <- shapiro.test(residuos_nuevo)
+print(shapiro_test_nuevo)
+```
+dado que p es mayor a 0.05, no se rechaza la hipótesis nula de normalidad de los residuos, lo que sugiere que los residuos siguen una distribución normal.
+
+```{r}
+
+# Homocedasticidad con ncvTest:
+#H0: Los residuos tienen varianza constante (homocedasticidad).
+#Ha: Los residuos no tienen varianza constante (heterocedasticidad).
+
+ncv <- ncvTest(modelo_lm_nuevo$finalModel)
+print(ncv)
+```
+el valor p de la prueba ncvTest es mayor a 0.05, lo que indica que no se rechaza la hipótesis nula de homocedasticidad, sugiriendo que los residuos tienen varianza constante.
+
+```{r}
+
+# Independencia de los Residuos 
+# H0: Los residuos son independientes.
+# Ha: Los residuos están autocorrelacionados.
+dw_test <- durbinWatsonTest(modelo_lm_nuevo$finalModel)
+print(dw_test)
+
+```
+El valor de Durbin-Watson es cercano a 2, lo que sugiere que no hay autocorrelación significativa entre los residuos. Por lo tanto, se acepta la hipótesis nula de independencia de los residuos.
+
+```{r}
+#Estudiando la multicolinealidad con VIF
+
+vif_values <- vif(modelo_lm_nuevo$finalModel)
+print(vif_values)
+
+```
+Todos los valores son menores a 5, lo que indica que no hay multicolinealidad severa entre los predictores. Por lo tanto, se acepta la hipótesis nula de ausencia de multicolinealidad.
+
+```{r}
+#Estudiando la importancia relativa de las variables, con la función varImp del paquete caret
+#esto nos permite ver qué tan importantes son los predictores en el modelo.
+
+importancia <- varImp(modelo_lm_nuevo)
+print(importancia)
+
+```
+Con el nuevo modelo, se observa que las variables seleccionadas tienen una importancia relativa alta, lo que indica que son relevantes para el modelo de regresión lineal múltiple.
+
+```{r}
+#Influencia de los casos
+
+influencia <- influencePlot(modelo_lm_nuevo$finalModel)
+print(influencia)
+
+```
+Como se puede observar no hay casos influyentes dentro del rango -2 a 2, lo que indica que no hay casos que influyan significativamente en el modelo. Por lo tanto, se acepta la hipótesis nula de ausencia de casos influyentes.
+
+Dado que se cumplen todos los supuestos de la regresión lineal múltiple, podemos concluir que el modelo es confiable.
+para los predictores seleccionados:
+```{r}
+print(nuevos_predictores)
+```
+
+
+## 4. Haciendo un poco de investigación sobre el paquete caret, en particular cómo hacer Recursive Feature Elimination (RFE), construir un modelo de regresión lineal múltiple para predecir la variable IMC que incluya entre 10 y 20 predictores, seleccionando el conjunto de variables que maximice R2 y que use cinco repeticiones de validación cruzada de cinco pliegues para evitar el sobreajuste (obviamente no se debe considerar las variables Peso, Estatura ni estado nutricional –Weight, Height, EN respectivamente). 
+
+```{r}
+# Seleccionamos los datos, excluyendo las variables prohibidas.
+# El objetivo es predecir IMC, por lo que la quitamos de los predictores.
+datos_para_rfe <- muestra %>%
+  select(-Weight, -Height, -EN, -IMC)
+
+x <- datos_para_rfe
+y <- muestra$IMC
+
+# Configuración del Control de RFE
+rfe_control <- rfeControl(
+  # Usamos las funciones para regresión lineal (lm).
+  functions = lmFuncs, 
+  
+  # Método de remuestreo: Validación cruzada repetida.
+  method = "repeatedcv",
+  
+  # Número de pliegues (folds) para la validación cruzada.
+  number = 5,
+  
+  # Número de repeticiones de la validación cruzada.
+  repeats = 5,
+  verbose = FALSE
+)
+
+#  Ejecución del Algoritmo RFE
+rfe_perfil <- rfe(
+  x = x, 
+  y = y, 
+  sizes = c(10:20), # Probamos modelos con 10, 11, ..., 20 variables
+  rfeControl = rfe_control
+)
+
+# Imprimir el resultado del proceso RFE.
+# 'caret' seleccionará el mejor modelo basándose en RMSE, pero nos mostrará R2.
+print(rfe_perfil)
+
+# Obtener la lista de los predictores óptimos seleccionados.
+# El resultado corresponde al modelo que minimizó RMSE.
+cat("\nPredictores seleccionados por el modelo óptimo:\n")
+print(predictors(rfe_perfil))
+
+# Para cumplir el requisito de maximizar R-cuadrado, inspeccionamos la tabla de resultados.
+cat("\nTabla de rendimiento para cada tamaño de subconjunto:\n")
+print(rfe_perfil$results)
+
+# Graficar los resultados para ver visualmente el rendimiento.
+# El gráfico muestra el R-cuadrado para cada tamaño de subconjunto de variables.
+plot(rfe_perfil, type = c("g", "o"), main = "Rendimiento de RFE por número de predictores")
+```
+### Confiabilidad (Modelo Pregunta 4)
+
+Evaluando la confiabilidad del modelo de regresión logística, se deben considerar las siguientes condiciones:
+
+#### Relacion lineal entre predictores y respuesta
+
+```{r}
+predictores <- predictors(rfe_perfil)
+
+formula <- formula(paste("IMC ~", paste(predictores, collapse= " + ")))
+
+entrenamiento <- train(formula, data = muestra, method = "lm", trControl = trainControl(method = "repeatedcv",
+                                                                                        number = 5,
+                                                                                        repeats= 5))
+
+modelo_rfe <- lm(formula(paste("IMC ~", paste(predictores, collapse= " + "))), data = muestra)
+
+residualPlots(modelo_rfe, terms = ~1)
+```
+
+Se cumple la condición de linealidad, dado el p-valor mayor a 0.05
+
+#### Residuos independientes
+
+```{r}
+durbinWatsonTest(modelo_rfe)
+```
+
+#### No multicolinealidad
+
+```{r}
+vif(modelo_rfe)
+```
+Para Forearm.Girth ocurre que tiene un vifvalue > 10, por lo que la multicolinealidad para esta variable es severa.
+
+
+#### Casos influyentes
+
+```{r}
+# Usando la funcion influencePlot() del paquete car
+inf <- influencePlot(modelo_rfe)
+print(inf)
+```
+```{r}
+umbral_hat <- 2 * mean(hatvalues(modelo_rfe))
+umbral_cook <- 4 / nrow(muestra)
+
+print(umbral_cook)
+print(umbral_hat)
+```
+
+
+Se destaca el caso 22, el cual posee valor Hat de 0.407
+Esto sugiere que existe una relación no lineal entre al menos uno de los predictores y la variable de respuesta.
+
+### Poder Predictivo (Modelo Pregunta 4)
+
+```{r}
+summary(entrenamiento$finalModel)
+```
+
+Respecto al valor $R²$ ajustado, con valor 0.8451, significa que aunque se tenga muchos predictores, la mayoría no son simple "ruido" y contribuyen colectivamente al modelo. Por lo tanto, se puede decir que el modelo tiene un poder explicativo muy fuerte sobre los datos de entrenamiento, lo que es un fuerte indicativo de un buen potencial predictivo.
+
+## 5. Usando RFE, construir un modelo de regresión logística múltiple para la variable EN que incluya el conjunto de predictores, entre dos y seis, que entregue la mejor curva ROC y que utilice validación cruzada dejando uno fuera para evitar el sobreajuste (obviamente no se debe considerar las variables Peso, Estatura –Weight y Height respectivamente– ni IMC).
+
+Se aplicará RFE con las funciones definidas en el paquete caret, en este caso establecemos `lrFuncs` para que se utilice la regresión logística, el método de LOOCV, y que se maximice el AUC (área bajo la curva ROC) como métrica de evaluación. 
+
+```{r warning=FALSE}
+# Descartar variables pedidas, factorizar EN para usarla en rfe()
+muestra_p5 <- muestra %>%
+  select(-Weight, -Height, -IMC) %>%
+  mutate(EN = factor(EN, levels = c(0, 1), labels = c("NO", "SI")))
+
+# hace que la búsqueda de predictores maximice AUC
+lrFuncs[["summary"]] <- twoClassSummary
+
+# Especificar parametros para la regresion
+rlog_control <- rfeControl(
+  functions = lrFuncs, 
+  method = "LOOCV", 
+  saveDetails = TRUE, 
+  returnResamp = "final", 
+  verbose = FALSE
+)
+
+rlog_trcontrol <- trainControl(
+  method = "none",
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary#### Casos influyentes
+)
+
+# Aplicar RFE
+set.seed(21226)
+rlog_rfe <- rfe(EN ~ ., data = muestra_p5,
+                sizes = 2:6,
+                rfeControl = rlog_control,
+                trControl = rlog_trcontrol,
+                metric = "ROC")
+
+print(rlog_rfe)
+```
+
+Vemos que el método RFE ha seleccionado un modelo con 3 variables predictoras, el cual posee un valor AUC = 0.8124, marginalmente superior al del modelo completo con 23 variables con AUC = 0.8120. Esto quiere decir que el modelo con 3 variables, tiene un 81.24% de probabilidad de clasificar correctamente un caso positivo (EN = 1) y un caso negativo (EN = 0) al azar.
+
+Podemos graficar el proceso de exploración de variables y el AUC obtenido para cada uno de los modelos:
+
+```{r}
+# Graficar, poner en xticks el punto donde se maximiza el ROC
+print(ggplot(rlog_rfe) +
+        scale_x_continuous(breaks = rlog_rfe$results$Variables))
+        
+```
+
+
+```{r}
+rlog <- rlog_rfe$fit
+summary(rlog)
+```
+Pasando a los valores del modelo, vemos que las variables seleccionadas son:
+
+- **Bitrochanteric.diameter** (Diámetro bitrocantéreo)
+- **Thigh.Girth** (Grosor promedio de ambos muslos)
+- **Ankle.Minimum.Girth** (Grosor promedio de la parte más delgada de ambos tobillos)
+
+La variable Bitrochanteric.diameter es la que menos aporta al modelo, con p = 0.873730, algo que indica una posible relación no lineal o derechamente una falta de relación con la variable, por lo que se podría considerar eliminarla del modelo.
+
+### Confiabilidad (Modelo Pregunta 5)
+
+Evaluando la confiabilidad del modelo de regresión logística, se deben considerar las siguientes condiciones:
+
+#### Relacion lineal entre predictores y respuesta
+
+```{r}
+set.seed(21226)
+
+# recrear modelo para usar plots mas facilmente
+modelo_p5_v2 <- glm(EN ~ Bitrochanteric.diameter + Thigh.Girth + Ankle.Minimum.Girth, data = muestra_p5, family = binomial(link = "logit"))
+
+residualPlots(modelo_p5_v2, fitted = FALSE, type = "rstandard")
+
+crPlots(modelo_p5_v2)
+```
+
+El gráfico residual para cada predictor parece indicar que la linealidad se cumple aceptablemente para cada caso. Las pruebas de curvatura también indican que no hay evidencia suficiente para rechazar la hipótesis nula de linealidad. 
+
+Aunque, en el gráfico de residuos parciales, vemos que la variable Bitrochanteric.diameter parece no contribuir a los residuos de manera significativa, lo que podría indicar que no es un predictor relevante, agregando a lo sospechado en el inciso anterior. A pesar de esto, la variable se mantiene en el modelo por ser parte del conjunto de variables seleccionadas por RFE.
+
+#### Residuos independientes
+
+```{r}
+set.seed(21226)
+durbinWatsonTest(rlog)
+```
+
+Dados los valores DW = 1.68479, cercano a 2; y p = 0.086, vemos que no hay evidencia suficiente para descartar que los residuos no tienen autocorrelación. Por ende, se cumple esta condición.
+
+#### No multicolinealidad
+
+```{r}
+vif(rlog)
+```
+
+Todos los valores de VIF son cercanos a 1 por lo que nos despreocupamos de que exista una multicolinealidad severa entre los predictores.
+
+#### Casos influyentes
+
+```{r}
+set.seed(21226)
+
+tabla_influencia <- influencePlot(rlog)
+
+umbral_hat <- 2 * mean(hatvalues(rlog))
+umbral_cook <- 4 / nrow(muestra_p5)
+
+# Agregar columnas para indicar si se pasan de los umbrales y por cuanto
+tabla_influencia <- tabla_influencia %>%
+  mutate(HighHat = Hat - umbral_hat, HighCook = CookD - umbral_cook) %>% 
+  arrange(desc(Hat)) %>% 
+  mutate(HighHat = ifelse(HighHat > 0, round(HighHat, digits = 5), ""),
+         HighCook = ifelse(HighCook > 0, round(HighCook, digits = 5), ""))
+
+print(tabla_influencia)
+```
+Viendo el gráfico burbuja con las medidas de influencia para el modelo y la tabla respectiva con los valores, se destacan cuatro casos que parecen tener una influencia significativa en el modelo: **2**, **25**, **51**, y **97**. Los umbrales asociados a estas medidas corresponden a:
+
+```{r}
+sprintf("Umbral Hat = %.3f, Umbral Cook = %.3f", umbral_hat, umbral_cook)
+```
+
+Agregamos a la tabla dos columnas que indican cuánto sobrepasan cada medida el valor de su umbral en caso de hacerlo. Para 97 y 51, ambos tienen distancias de Cook altas, pero no se acercan a 1, considerado como valor crítico. Para 2 y 25, ambos sobrepasan el umbral para el apalancamiento, siendo este ultimo el más alejado, por lo que se consideran casos influyentes.
+
+### Poder predictivo (Modelo Pregunta 5)
+
+Para evaluar el poder predictivo del modelo, se utilizará la matriz de confusión evaluada con el conjunto de validación cruzada dejando uno fuera, y se calculará el AUC de la curva ROC.
+
+```{r}
+predicciones <- predict(rlog_rfe, muestra_p5)
+matriz_conf <- confusionMatrix(predicciones[["pred"]], muestra_p5$EN, positive = "SI")
+print(matriz_conf)
+```
+Pasando a graficar la curva ROC asociada:
+
+```{r}
+curva_roc <- roc(muestra_p5$EN, predicciones[[2]], levels = c("NO", "SI"), direction = "<")
+curva_roc_auc <- round(curva_roc$auc, 4)
+
+plot_roc <- ggroc(curva_roc, col = "steelblue") +
+  geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "red") +
+  annotate("text", x = 0.3, y = 0.2, 
+           label = paste("AUC =", curva_roc_auc), 
+           color = "black", size = 8) +
+  theme_pubr()
+
+print(plot_roc)
+```
+
+El área bajo la curva ROC obtenida es de 0.8544, con sensibilidad = 0.76, especificidad = 0.74, lo que indica un buen rendimiento del modelo. Con los valores ya mencionados podemos declarar que el modelo es capaz de identificar correctamente verdaderos positivos y verdaderos negativos en un 76% y 74% de los casos respectivamente.
+

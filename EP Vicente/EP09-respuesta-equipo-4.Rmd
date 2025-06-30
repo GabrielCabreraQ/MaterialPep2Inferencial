@@ -1,0 +1,278 @@
+---
+title: "EP09 - Regresión Lineal Múltiple"
+author: "Equipo 4"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Un estudio recolectó medidas anatómicas de 247 hombres y 260 mujeres (Heinz et al., 2003). El estudio incluyó nueve mediciones del esqueleto (ocho diámetros y una profundidad de hueso a hueso) y doce mediciones de grosor (circunferencias) que incluyen el tejido. 
+
+## 1. Definir la semilla a utilizar, que corresponde a los últimos cuatro dígitos del RUN (sin considerar el dígito verificador) del integrante de menor edad del equipo.
+
+## 2. Seleccionar una muestra aleatoria de 100 mujeres (si la semilla es un número par) o 100 hombres (si la semilla es impar), y separar 70 casos para trabajar en la construcción de modelos y 30 para su evaluación en datos no vistos.
+
+Definimos la semilla como 9976, un número par, por lo tanto, seleccionaremos una muestra aleatoria de 100 mujeres.
+
+```{r message=F, warning=F}
+library(dplyr)
+library(ggplot2)
+library(car)
+library(ggpubr)
+library(tidyr)
+
+# 1. Definir semilla
+set.seed(9976)
+
+# 2. Muestra aleatoria 100 mujeres
+datos <- read.csv2("EP09 Datos.csv", sep = ";")
+
+muestra <- datos %>%
+  mutate(Gender = as.factor(Gender)) %>%
+  filter(Gender == 0) %>%
+  sample_n(100)
+
+# Cjto. Entrenamiento -> 70 casos
+n_entrenamiento <- 70
+i_entrenamiento <- sample.int(n = nrow(muestra), size = n_entrenamiento, replace = FALSE)
+entrenamiento <- muestra[i_entrenamiento, ]
+
+# Cjto. Prueba -> 30 casos
+prueba <- muestra[-i_entrenamiento, ]
+
+head(entrenamiento)
+```
+
+## 3. Seleccionar de forma aleatoria ocho posibles variables predictoras.
+
+Para seleccionar las 8 variables usaremos la función sample del paquete base de R, considerando la semilla definida anteriormente (`set.seed(9976)`).
+
+```{r}
+# 3. Seleccionar 8 variables al azar
+variables <- sample(colnames(entrenamiento), 8)
+variables <- c(variables, "Weight", "Hip.Girth")
+print(variables)
+```
+
+Luego, haremos el complemento de las variables seleccionadas para ver cuáles no fueron sorteadas.
+Para entonces crear la matriz de correlación entre la variable Weight y dichas variables.
+
+```{r}
+# Acotar dataframe cjto. entrenamiento a solo las variables seleccionadas.
+tabla_va <- entrenamiento %>% select(all_of(variables))
+
+# Para ver las otras que no fueron sorteadas
+otras_variables <- setdiff(colnames(entrenamiento), variables)
+
+# Armar matriz de correlacion
+cormatrix <- cor(select(entrenamiento, -Gender, -Weight, -Height), y = entrenamiento$Weight)
+
+# ordenar de mayor a menor
+cormatrix <- cormatrix[order(abs(cormatrix), decreasing = TRUE),]
+cormatrix
+```
+
+## 4. Seleccionar, de las otras variables, una que el equipo considere que podría ser útil para predecir la variable Peso (sin considerar la estatura), justificando bien esta selección.
+
+Evaluando la correlación entre el peso y las demás variables que no fueron seleccionadas, vemos que la variable `Hip.Girth` (Grosor de la cadera) tiene la mayor correlación con el peso, con un valor de 0.922. Por lo tanto, seleccionaremos esta variable como predictor inicial. 
+
+## 5. Usando el entorno R y paquetes estándares, construir un modelo de regresión lineal simple con el predictor seleccionado en el paso anterior.
+
+```{r}
+# RLS de relacion Peso y Grosor de Cadera
+rls <- lm(Weight ~ Hip.Girth, data = entrenamiento)
+summary(rls)
+```
+
+El modelo de regresión lineal simple muestra que el grosor de la cadera (`Hip.Girth`) es un predictor significativo del peso (`Weight`), con un valor p < 2e-16 y un R² ajustado de 0.8492, lo que indica que el modelo explica aproximadamente el 84.9% de la variabilidad en el peso.
+
+## 6. Usando herramientas estándares para la exploración de modelos del entorno R, buscar entre dos y cinco predictores de entre las variables seleccionadas al azar en el punto 3, para agregar al modelo de regresión lineal simple obtenido en el paso 5.
+
+Para buscar entre 2 y 5 predictores, usaremos la regresión escalonada (stepwise regression) con el criterio de información bayesiano (BIC) para seleccionar el mejor modelo utilizando los ocho predictores sorteados anteriormente.
+
+Aplicando la regresión escalonada, mostramos todos los modelos que genera con `trace = 1`, su respectivo valor BIC:
+
+```{r}
+# Dataframe con solo las columnas dadas por otras_variables + Weight
+upper <- lm(Weight ~ ., data = tabla_va)
+
+# Proceder. Recordar que para BIC, k = log(n).
+modelo <- step(rls, direction = "both", 
+               scope = list(lower = rls, upper = upper), 
+               trace = 1, k = log(nrow(entrenamiento)), test = "F")
+
+# Modelo obtenido, con mejor BIC
+summary(modelo)
+```
+
+Usando regresión escalonada, escogiendo aquel modelo con menor BIC, conseguimos un modelo con 5 predictores de entre las variables que salieron sorteadas:
+
+- Hip.Girth (Grosor de la cadera)
+- Calf.Maximum.Girth (Grosor promedio de la parte más ancha de ambas pantorrillas)
+- Wrist.Minimum.Girth (Grosor promedio de la parte más delgada de ambas muñecas)
+- Chest.depth (Profundidad del pecho)
+- Knee.Girth (Grosor promedio de ambas rodillas)
+
+## 7. Evaluar la bondad de ajuste (incluyendo el análisis de casos atípicos y casos influyentes) y la generalidad (condiciones para RLM) de los modelos y “arreglarlos” en caso de que presenten algún problema.
+
+Para evaluar la bondad de ajuste y la generalidad del modelo, se deben considerar las siguientes condiciones para aplicar la RLM:
+
+**1. La variable de respuesta debe ser cuantitativa y continua, sin restricciones para su variabilidad.**
+
+Al tratarse del peso (Weight) medido en $Kg$ de la persona como variable de respuesta, esta condición se cumple, ya que es una medición física- por naturaleza, cuantitativa y continua.
+
+**2. Los predictores deben ser cuantitativos o dicotómicos**
+
+En este caso, todos los predictores son cuantitativos, ya que representan medidas anatómicas del cuerpo humano (grosor de cadera, grosor de pantorrillas, etc.). Por lo tanto, esta condición también se cumple.
+
+**3. Los predictores deben tener algún grado de variabilidad**
+
+```{r}
+# Verificar la variabilidad de los predictores
+cat("Resumen del modelo: \n")
+print(summary(modelo))
+```
+
+Este modelo tiene 5 predictores, todos con valores p < 0.05, lo que indica que todos los predictores tienen un grado significativo de variabilidad y son relevantes para el modelo.
+
+
+**4. Cada predictor debe estar relacionado linealmente con la respuesta.**
+
+Para evaluar esto usaremos gráficos de residuos y gráficos de modelos marginales.
+
+```{r}
+g_residuos <- residualPlots(modelo,
+             type = "rstandard",
+             id = list(method = "r", n = 3, cex = 0.7, location = "lr"),
+             col = "orange", pch = 20, col.quad = "purple")
+```
+
+Se puede observar que los residuos estandarizados no presentan patrones evidentes, lo que sugiere que los predictores están relacionados linealmente con la respuesta.
+
+```{r}
+g_marginal <- marginalModelPlots(modelo)
+```
+
+En este gráfico, se observa que la relación entre los predictores y la variable de respuesta es lineal, lo que respalda la suposición de linealidad.
+Dado que ambos gráficos sugieren que los predictores están relacionados linealmente con la respuesta, podemos concluir que esta condición se cumple.
+
+**5. La distribución de los residuos debe ser cercana a la normal centrada en cero.**
+
+Para evaluar esta condición usaremos la prueba de Shapiro-Wilk y un gráfico Q-Q de los residuos estandarizados para complementar su resultado.
+
+```{r}
+shapiro <- shapiro.test(residuals(modelo))
+print(shapiro)
+
+g_shapiro <- ggqqplot(residuals(modelo), 
+                      ylab = "Residuos estandarizados", 
+                      xlab = "Cuantiles teóricos",
+                      title = "Gráfico Q-Q de residuos estandarizados",
+                      ggtheme = theme_grey())
+print(g_shapiro)
+```
+
+Vemos que no podemos descartar la idea de que los residuos siguen una distribución normal, teniendo un valor p = 0.5214. El gráfico QQ también sugiere que los residuos están bastante alineados con la línea de referencia, lo que indica que la normalidad de los residuos es razonable.
+
+**6. La variabilidad de los residuos debe ser aproximadamente constante (homocedasticidad).**
+
+Evaluando esto usando la prueba NCV (Non-Constant Error Variance):
+
+```{r}
+ncv <- ncvTest(modelo)
+ncv
+```
+
+El valor entregado por la prueba es p = 0.14086, lo que indica que no podemos rechazar la hipótesis nula de homocedasticidad, sugiriendo que la variabilidad de los residuos es aproximadamente constante.
+
+**7. Los residuos deben ser independientes entre sí.**
+
+Para evaluar la independencia de los residuos, se puede utilizar la prueba de Durbin-Watson, que evalúa la autocorrelación de los residuos.
+
+```{r}
+durbin_watson <- durbinWatsonTest(modelo)
+durbin_watson
+```
+
+Obteniendo valores p = 0.816 y el estadístico de la prueba es cercano a 2 (DW = 2.0755), esto indica que no hay evidencia de autocorrelación en los residuos, sugiriendo que los residuos son independientes entre sí.
+
+**8. No debe haber multicolinealidad entre los predictores.**
+
+Para evaluar la multicolinealidad entre los predictores, se puede utilizar el Factor de Inflación de la Varianza (VIF).
+
+```{r}
+vif_values <- vif(modelo)
+print(vif_values)
+```
+
+Todos los valores del VIF se encuentran entre 1 y 5 lo cual indica que existe multicolinealidad moderada pero no severa entre los predictores. No es necesario eliminar ninguna variable del modelo.
+
+**9. Las estimaciones de los coeficientes del modelo no debe estar alterados por unos pocas observaciones influyentes.**
+
+Para evaluar si hay observaciones influyentes que alteren las estimaciones de los coeficientes del modelo, utilizaremos gráficos de influencia y medidas como el valor de Cook y la distancia de apalancamiento (hat values).
+
+```{r}
+influence_plot <- influencePlot(modelo)
+```
+
+En el gráfico de influencia, los valores que se destacan tienen IDs 91, 67, 57, 42 y 43. Pero visualmente, son llamativos los siguientes:
+
+- \#91 parece estar algo alejado y tener una influencia relativamente alta en los coeficientes del modelo.
+
+- \#43 se encuentra muy alejado de la media muestral, con un valor de apalancamiento altísimo.
+
+Viendo la tabla de valores que se genera junto al gráfico:
+
+```{r}
+# Valores de Cook y Hat
+print(influence_plot %>% arrange(desc(Hat)))
+```
+
+Como el conjunto de datos no es tan grande (n = 70), no descartamos valores por su distancia de Cook- ninguna es mayor a 1, umbral sugerido para estos casos. El valor Hat asociado a \#43 es de 0.349, muy alto en comparación a la tolerancia sugerida de $\frac{2}{n}$, valor que en este caso es `r 2 / nrow(entrenamiento)`. Sin embargo, no se descartará este valor, ya que no se considera un valor atípico extremo y no afecta significativamente la bondad de ajuste del modelo.
+
+## 8. Evaluar el poder predictivo del modelo con los datos no utilizados para construirlo.
+
+```{r}
+#calculo de RMSE para el conjunto de entrenamiento
+rmseE <- sqrt(mean(resid(modelo)^2)) 
+
+#predicciones en el conjunto de prueba
+prediccion <- predict(modelo, newdata = prueba)
+r_prueba <- prueba$Weight - prediccion
+rmseP <- sqrt(mean(r_prueba^2))
+
+#porcentaje de cambio en el error
+porcentajeCambio <- ((rmseP - rmseE) / rmseE) * 100
+
+#valor r cuadrado
+r2 <- 1 - sum((prueba$Weight - prediccion)^2) / 
+                    sum((prueba$Weight - mean(prueba$Weight))^2)
+
+#Salida
+cat("Rendimiento del modelo:\n")
+cat("RMSE para el conjunto de entrenamiento:", round(rmseE, 3), "\n")
+cat("RMSE para el conjunto de prueba:", round(rmseP, 3), "\n")
+cat("Error del cambio:", round(porcentajeCambio, 2), "%\n")
+cat("r cuadrado obtenido en datos de prueba:", round(r2, 4), "\n")
+
+#Grafico
+ggplot(data = data.frame(reales = prueba$Weight, predichos = prediccion), 
+       aes(x = reales, y = predichos)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(x = "Valores reales", y = "Valores predichos", 
+       title = "Comparación de valores Reales vs Predichos en datos de prueba") +
+  theme_minimal()
+
+
+```
+
+## Conclusión
+
+El modelo de regresión lineal múltiple construido con los predictores seleccionados muestra un buen ajuste a los datos de entrenamiento, con un R² ajustado de 0.8492 y una RMSE relativamente baja. La evaluación del modelo en el conjunto de prueba indica que el modelo tiene un poder predictivo razonable, con un R² de 0.8475 y una RMSE de 3.45.
+Sin embargo, es importante tener en cuenta que el modelo puede no generalizar bien a otros conjuntos de datos, ya que se construyó utilizando un subconjunto específico de datos. Además, la presencia de algunas observaciones influyentes sugiere que el modelo podría beneficiarse de una revisión más detallada y posiblemente de la eliminación de algunos puntos atípicos.
+Tomando en cuenta el porcentaje de cambio en el error entre el conjunto de entrenamiento y el conjunto de prueba, que es del 0.29%, podemos concluir que el modelo tiene un buen poder predictivo y no presenta problemas significativos de sobreajuste.
+
